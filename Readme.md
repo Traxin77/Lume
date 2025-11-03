@@ -1,6 +1,6 @@
 # 🌙 Lume
 
-**Lume** is a minimalist, modular **browser forensics toolkit** written in Go.  
+**Lume** is a modular **browser forensics toolkit** written in Go.  
 It illuminates hidden traces left behind by Chromium-based browsers — extracting artifacts such as **cookies, passwords, history, downloads, and bookmarks**, all neatly formatted in JSON for forensic analysis or research.
 
 > _“Lume reveals what hides beneath the surface.”_
