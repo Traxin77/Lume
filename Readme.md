@@ -1,6 +1,6 @@
 # 🌙 Lume
 
-**Lume** is a minimalist, modular **browser forensics toolkit** written in Go.  
+**Lume** is a modular **browser forensics toolkit** written in Go.  
 It illuminates hidden traces left behind by Chromium-based browsers — extracting artifacts such as **cookies, passwords, history, downloads, and bookmarks**, all neatly formatted in JSON for forensic analysis or research.
 
 > _“Lume reveals what hides beneath the surface.”_
@@ -40,3 +40,9 @@ git clone https://github.com/username/lume.git
 cd lume
 go build -o lume /cmd/main.go
 ```
+## 💡 Project Philosophy & Disclaimer
+
+> [!IMPORTANT]
+> This is a hobby project created for educational and security research purposes. It serves as a personal learning experience and a playing field for exploring advanced Windows concepts.
+>
+> **This tool is NOT intended to be a fully-featured infostealer or a guaranteed EDR evasion tool.** While it employs advanced techniques, its primary goal is to demonstrate and dissect the ABE mechanism, not to provide operational stealth for malicious use. Please ensure compliance with all relevant legal and ethical guidelines.
