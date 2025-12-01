@@ -759,7 +759,7 @@ func extractCookies(profileDir, profileName string, masterKey []byte) error {
 	
 	fmt.Printf("  Cookies: %d succeeded, %d failed\n", successCount, failCount)
 	
-	outputDir := filepath.Join("chrome", profileName)
+	outputDir := filepath.Join("results", profileName)
 	os.MkdirAll(outputDir, 0755)
 	
 	cookieJSON, err := json.MarshalIndent(cookies, "", "  ")
@@ -819,7 +819,7 @@ func extractPasswords(profileDir, profileName string, masterKey []byte) error {
 	
 	fmt.Printf("  Passwords: %d succeeded, %d failed\n", successCount, failCount)
 	
-	outputDir := filepath.Join("chrome", profileName)
+	outputDir := filepath.Join("results", profileName)
 	os.MkdirAll(outputDir, 0755)
 	
 	passwordJSON, err := json.MarshalIndent(passwords, "", "  ")
