@@ -85,7 +85,7 @@ func Run() {
 	}
 
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "chromium")
 	os.MkdirAll(resultsDir, 0755)
 
 	outputFile := filepath.Join(resultsDir, "chromium_download_history.json")

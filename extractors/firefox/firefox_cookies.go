@@ -56,7 +56,6 @@ static PORT_GetError_t PORT_GetError_ptr = NULL;
 
 static int try_from_dir(const char *base) {
     char dll_path[MAX_PATH];
-    DWORD err;
 
     snprintf(dll_path, MAX_PATH, "%s\\mozglue.dll", base);
     mozglue_dll = LoadLibraryA(dll_path);
@@ -75,7 +74,8 @@ static int try_from_dir(const char *base) {
     return 0;
 }
 
-static int load_nss_library(const char* firefox_path) {
+// NOTE: non-static so other cgo files (firefox_passwords.go) can see them
+int load_nss_library(const char* firefox_path) {
     if (firefox_path && firefox_path[0] != '\0') {
         SetDllDirectoryA(firefox_path);
         if (try_from_dir(firefox_path) == 0) goto loaded_ok;
@@ -106,50 +106,50 @@ loaded_ok:
     return 0;
 }
 
-static void unload_nss_library() {
+void unload_nss_library() {
     if (nss3_dll) { FreeLibrary(nss3_dll); nss3_dll = NULL; }
     if (mozglue_dll) { FreeLibrary(mozglue_dll); mozglue_dll = NULL; }
 }
 
-static SECStatus my_NSS_Init(const char *configdir) {
+SECStatus my_NSS_Init(const char *configdir) {
     if (!NSS_Init_ptr) return SECFailure;
     return NSS_Init_ptr(configdir);
 }
 
-static SECStatus my_NSS_Shutdown() {
+SECStatus my_NSS_Shutdown() {
     if (!NSS_Shutdown_ptr) return SECFailure;
     return NSS_Shutdown_ptr();
 }
 
-static PK11SlotInfo* my_PK11_GetInternalKeySlot() {
+PK11SlotInfo* my_PK11_GetInternalKeySlot() {
     if (!PK11_GetInternalKeySlot_ptr) return NULL;
     return PK11_GetInternalKeySlot_ptr();
 }
 
-static void my_PK11_FreeSlot(PK11SlotInfo *slot) {
+void my_PK11_FreeSlot(PK11SlotInfo *slot) {
     if (PK11_FreeSlot_ptr) PK11_FreeSlot_ptr(slot);
 }
 
-static PRBool my_PK11_NeedLogin(PK11SlotInfo *slot) {
+PRBool my_PK11_NeedLogin(PK11SlotInfo *slot) {
     if (!PK11_NeedLogin_ptr) return PR_FALSE;
     return PK11_NeedLogin_ptr(slot);
 }
 
-static SECStatus my_PK11_CheckUserPassword(PK11SlotInfo *slot, const char *password) {
+SECStatus my_PK11_CheckUserPassword(PK11SlotInfo *slot, const char *password) {
     if (!PK11_CheckUserPassword_ptr) return SECFailure;
     return PK11_CheckUserPassword_ptr(slot, password);
 }
 
-static SECStatus my_PK11SDR_Decrypt(SECItem *data, SECItem *result, void *cx) {
+SECStatus my_PK11SDR_Decrypt(SECItem *data, SECItem *result, void *cx) {
     if (!PK11SDR_Decrypt_ptr) return SECFailure;
     return PK11SDR_Decrypt_ptr(data, result, cx);
 }
 
-static void my_SECITEM_ZfreeItem(SECItem *item, PRBool freeit) {
+void my_SECITEM_ZfreeItem(SECItem *item, PRBool freeit) {
     if (SECITEM_ZfreeItem_ptr) SECITEM_ZfreeItem_ptr(item, freeit);
 }
 
-static int my_PORT_GetError() {
+int my_PORT_GetError() {
     if (!PORT_GetError_ptr) return -1;
     return PORT_GetError_ptr();
 }
@@ -163,6 +163,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -170,7 +171,7 @@ import (
 	"strings"
 	"time"
 	"unsafe"
-	"log"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -182,15 +183,13 @@ type CookieEntry struct {
 	Path           string  `json:"path,omitempty"`
 	Expiry         *string `json:"expiry,omitempty"`
 	CreationTime   *string `json:"creation_time,omitempty"`
-	LastAccessed   *string `json:"last_accessed,omitempty"`
+	LastAccessed   *string `json:"last_access,omitempty"`
 	IsSecure       bool    `json:"is_secure,omitempty"`
 	IsHttpOnly     bool    `json:"is_http_only,omitempty"`
 	SourceFile     string  `json:"_source_file,omitempty"`
 }
 
-// NSSWrapper provides NSS decryption functionality
-
-
+// NewNSSWrapper constructs the shared NSS wrapper used by both cookies & passwords.
 func NewNSSWrapper(nonFatalDecryption bool) *NSSWrapper {
 	return &NSSWrapper{
 		nonFatalDecryption: nonFatalDecryption,
@@ -216,7 +215,7 @@ func UnloadNSSLibrary() {
 	C.unload_nss_library()
 }
 
-// Initialize sets up the NSS environment for a specific profile
+// Initialize sets up the NSS environment for a specific profile (used by cookies)
 func (n *NSSWrapper) Initialize(profilePath string) error {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
@@ -228,9 +227,6 @@ func (n *NSSWrapper) Initialize(profilePath string) error {
 	cPath := C.CString(profilePath)
 	defer C.free(unsafe.Pointer(cPath))
 
-	// Using fmt instead of a potentially nil logger
-	// fmt.Printf("Initializing NSS for profile: %s\n", profilePath)
-
 	if status := C.my_NSS_Init(cPath); status != C.SECSuccess {
 		return fmt.Errorf("NSS_Init failed")
 	}
@@ -238,9 +234,6 @@ func (n *NSSWrapper) Initialize(profilePath string) error {
 	n.initialized = true
 	return nil
 }
-
-// Shutdown closes the NSS environment
-
 
 func (n *NSSWrapper) Authenticate(profile string, interactive bool) error {
 	if !n.initialized {
@@ -633,7 +626,6 @@ func RunCookies() {
 		for _, p := range profiles {
 			cookieDB := filepath.Join(p, "cookies.sqlite")
 			if _, err := os.Stat(cookieDB); err == nil {
-				// We now use the safe Initialize method defined within this file
 				if err := nss.Initialize(p); err != nil {
 					fmt.Printf("Warning: Failed to initialize NSS: %v\n", err)
 				} else {
@@ -675,7 +667,7 @@ func RunCookies() {
 	}
 
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "firefox")
 	os.MkdirAll(resultsDir, 0755)
 	outputPath := filepath.Join(resultsDir, "firefox_cookies.json")
 

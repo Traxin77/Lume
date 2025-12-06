@@ -31,7 +31,7 @@ type LocalState struct {
 
 func Run() {
 	browser := flag.String("browser", "all", "Browser to scan: chrome, edge, or all")
-	output := flag.String("output", "profiles.json", "Output JSON file name (stored in results/)")
+	output := flag.String("output", "chromium_profiles.json", "Output JSON file name (stored in results/)")
 	flag.Parse()
 
 	var profiles []Profile
@@ -55,7 +55,7 @@ func Run() {
 
 	// Store relative to executable
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "chromium")
 	os.MkdirAll(resultsDir, 0755)
 	outputPath := filepath.Join(resultsDir, *output)
 

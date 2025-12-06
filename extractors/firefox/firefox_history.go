@@ -162,7 +162,7 @@ LIMIT ?;
 func RunHistory() {
 	const limit = 500 // default rows per profile
 
-	outPath := filepath.Join("results", "firefox_history.json")
+	outPath := filepath.Join("results","firefox", "firefox_history.json")
 
 	profiles, err := findProfilesHistory()
 	if err != nil {

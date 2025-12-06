@@ -79,7 +79,7 @@ func extractEmailFromProfile(profile string) *string {
 
 // RunMail locates firefox profiles, extracts mail/email related prefs and writes JSON to ./results/firefox_mail.json
 func RunMail() {
-	outPath := filepath.Join("results", "firefox_mail.json")
+	outPath := filepath.Join("results", "firefox", "firefox_mail.json")
 
 	profiles := findProfilesMail()
 	if len(profiles) == 0 {

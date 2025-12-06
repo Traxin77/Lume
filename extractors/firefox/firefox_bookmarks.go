@@ -120,7 +120,7 @@ func RunBookmarks() {
 
 	// Save to results directory
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "firefox")
 	os.MkdirAll(resultsDir, 0755)
 
 	outFile := filepath.Join(resultsDir, "firefox_bookmarks.json")

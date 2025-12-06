@@ -249,7 +249,7 @@ func RunDownloads() {
 	}
 
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "firefox")
 	os.MkdirAll(resultsDir, 0755)
 	outputPath := filepath.Join(resultsDir, "firefox_downloads.json")
 

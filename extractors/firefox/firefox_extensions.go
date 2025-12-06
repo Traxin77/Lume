@@ -264,7 +264,7 @@ func getExtensionsFromProfile(profilePath string) ([]FirefoxExtension, error) {
 
 // RunExtensions locates firefox profiles, extracts extensions/add-ons and writes JSON to ./results/firefox_extensions.json
 func RunExtensions() {
-	outPath := filepath.Join("results", "firefox_extensions.json")
+	outPath := filepath.Join("results", "firefox","firefox_extensions.json")
 
 	profiles := findProfiles()
 	result := make(ProfileExtensions)

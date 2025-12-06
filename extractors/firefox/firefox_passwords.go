@@ -4,17 +4,15 @@
 package firefox
 
 /*
-#cgo LDFLAGS: -LC:/PROGRA~1/MOZILL~1 -lnss3 -lmozglue
-#cgo CFLAGS: -IC:/PROGRA~1/MOZILL~1
-
 #include <windows.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 typedef int PRBool;
 typedef int SECStatus;
-typedef enum { siBuffer = 0 } SECItemType;
+typedef enum {
+    siBuffer = 0
+} SECItemType;
 
 typedef struct {
     SECItemType type;
@@ -29,186 +27,21 @@ typedef struct PK11SlotInfoStr PK11SlotInfo;
 #define PR_TRUE 1
 #define PR_FALSE 0
 
-typedef SECStatus (*NSS_Init_t)(const char *);
-typedef SECStatus (*NSS_Shutdown_t)(void);
-typedef PK11SlotInfo* (*PK11_GetInternalKeySlot_t)(void);
-typedef void (*PK11_FreeSlot_t)(PK11SlotInfo *);
-typedef PRBool (*PK11_NeedLogin_t)(PK11SlotInfo *);
-typedef SECStatus (*PK11_CheckUserPassword_t)(PK11SlotInfo *, const char *);
-typedef SECStatus (*PK11SDR_Decrypt_t)(SECItem *, SECItem *, void *);
-typedef void (*SECITEM_ZfreeItem_t)(SECItem *, PRBool);
-typedef int (*PORT_GetError_t)(void);
-
-static HMODULE nss3_dll = NULL;
-static HMODULE mozglue_dll = NULL;
-
-static NSS_Init_t NSS_Init_ptr = NULL;
-static NSS_Shutdown_t NSS_Shutdown_ptr = NULL;
-static PK11_GetInternalKeySlot_t PK11_GetInternalKeySlot_ptr = NULL;
-static PK11_FreeSlot_t PK11_FreeSlot_ptr = NULL;
-static PK11_NeedLogin_t PK11_NeedLogin_ptr = NULL;
-static PK11_CheckUserPassword_t PK11_CheckUserPassword_ptr = NULL;
-static PK11SDR_Decrypt_t PK11SDR_Decrypt_ptr = NULL;
-static SECITEM_ZfreeItem_t SECITEM_ZfreeItem_ptr = NULL;
-static PORT_GetError_t PORT_GetError_ptr = NULL;
-
-static int try_from_dir(const char *base)
-{
-    char dll_path[MAX_PATH];
-    DWORD err;
-
-    snprintf(dll_path, MAX_PATH, "%s\\mozglue.dll", base);
-    mozglue_dll = LoadLibraryA(dll_path);
-    if (!mozglue_dll) {
-        err = GetLastError();
-        fprintf(stderr, "LoadLibraryA('%s') failed with error %lu\n", dll_path, err);
-        return -1;
-    }
-
-    snprintf(dll_path, MAX_PATH, "%s\\nss3.dll", base);
-    nss3_dll = LoadLibraryA(dll_path);
-    if (!nss3_dll) {
-        err = GetLastError();
-        fprintf(stderr, "LoadLibraryA('%s') failed with error %lu\n", dll_path, err);
-        FreeLibrary(mozglue_dll);
-        mozglue_dll = NULL;
-        return -1;
-    }
-
-    return 0;
-}
-
-static int load_nss_library(const char* firefox_path) {
-    DWORD err;
-
-    if (firefox_path && firefox_path[0] != '\0') {
-        SetDllDirectoryA(firefox_path);
-        if (try_from_dir(firefox_path) == 0) {
-            goto loaded_ok;
-        }
-    }
-
-    if (!nss3_dll) {
-        if (try_from_dir("C:\\Program Files\\Mozilla Firefox") == 0) {
-            goto loaded_ok;
-        }
-    }
-
-    if (!nss3_dll) {
-        if (try_from_dir("C:\\Program Files (x86)\\Mozilla Firefox") == 0) {
-            goto loaded_ok;
-        }
-    }
-
-    if (!mozglue_dll) {
-        mozglue_dll = LoadLibraryA("mozglue.dll");
-        if (!mozglue_dll) {
-            err = GetLastError();
-            fprintf(stderr, "LoadLibraryA('mozglue.dll') failed with error %lu\n", err);
-        }
-    }
-    if (!nss3_dll && mozglue_dll) {
-        nss3_dll = LoadLibraryA("nss3.dll");
-        if (!nss3_dll) {
-            err = GetLastError();
-            fprintf(stderr, "LoadLibraryA('nss3.dll') failed with error %lu\n", err);
-        }
-    }
-
-    if (!nss3_dll) {
-        return -1;
-    }
-
-loaded_ok:
-    NSS_Init_ptr = (NSS_Init_t)GetProcAddress(nss3_dll, "NSS_Init");
-    NSS_Shutdown_ptr = (NSS_Shutdown_t)GetProcAddress(nss3_dll, "NSS_Shutdown");
-    PK11_GetInternalKeySlot_ptr = (PK11_GetInternalKeySlot_t)GetProcAddress(nss3_dll, "PK11_GetInternalKeySlot");
-    PK11_FreeSlot_ptr = (PK11_FreeSlot_t)GetProcAddress(nss3_dll, "PK11_FreeSlot");
-    PK11_NeedLogin_ptr = (PK11_NeedLogin_t)GetProcAddress(nss3_dll, "PK11_NeedLogin");
-    PK11_CheckUserPassword_ptr = (PK11_CheckUserPassword_t)GetProcAddress(nss3_dll, "PK11_CheckUserPassword");
-    PK11SDR_Decrypt_ptr = (PK11SDR_Decrypt_t)GetProcAddress(nss3_dll, "PK11SDR_Decrypt");
-    SECITEM_ZfreeItem_ptr = (SECITEM_ZfreeItem_t)GetProcAddress(nss3_dll, "SECITEM_ZfreeItem");
-    PORT_GetError_ptr = (PORT_GetError_t)GetProcAddress(nss3_dll, "PORT_GetError");
-
-    if (!NSS_Init_ptr || !NSS_Shutdown_ptr || !PK11_GetInternalKeySlot_ptr ||
-        !PK11_FreeSlot_ptr || !PK11_NeedLogin_ptr || !PK11_CheckUserPassword_ptr ||
-        !PK11SDR_Decrypt_ptr || !SECITEM_ZfreeItem_ptr || !PORT_GetError_ptr) {
-
-        if (nss3_dll) {
-            FreeLibrary(nss3_dll);
-            nss3_dll = NULL;
-        }
-        if (mozglue_dll) {
-            FreeLibrary(mozglue_dll);
-            mozglue_dll = NULL;
-        }
-        return -2;
-    }
-
-    return 0;
-}
-
-static void unload_nss_library() {
-    if (nss3_dll) {
-        FreeLibrary(nss3_dll);
-        nss3_dll = NULL;
-    }
-    if (mozglue_dll) {
-        FreeLibrary(mozglue_dll);
-        mozglue_dll = NULL;
-    }
-}
-
-static SECStatus my_NSS_Init(const char *configdir) {
-    if (!NSS_Init_ptr) return SECFailure;
-    return NSS_Init_ptr(configdir);
-}
-
-static SECStatus my_NSS_Shutdown() {
-    if (!NSS_Shutdown_ptr) return SECFailure;
-    return NSS_Shutdown_ptr();
-}
-
-static PK11SlotInfo* my_PK11_GetInternalKeySlot() {
-    if (!PK11_GetInternalKeySlot_ptr) return NULL;
-    return PK11_GetInternalKeySlot_ptr();
-}
-
-static void my_PK11_FreeSlot(PK11SlotInfo *slot) {
-    if (PK11_FreeSlot_ptr) {
-        PK11_FreeSlot_ptr(slot);
-    }
-}
-
-static PRBool my_PK11_NeedLogin(PK11SlotInfo *slot) {
-    if (!PK11_NeedLogin_ptr) return PR_FALSE;
-    return PK11_NeedLogin_ptr(slot);
-}
-
-static SECStatus my_PK11_CheckUserPassword(PK11SlotInfo *slot, const char *password) {
-    if (!PK11_CheckUserPassword_ptr) return SECFailure;
-    return PK11_CheckUserPassword_ptr(slot, password);
-}
-
-static SECStatus my_PK11SDR_Decrypt(SECItem *data, SECItem *result, void *cx) {
-    if (!PK11SDR_Decrypt_ptr) return SECFailure;
-    return PK11SDR_Decrypt_ptr(data, result, cx);
-}
-
-static void my_SECITEM_ZfreeItem(SECItem *item, PRBool freeit) {
-    if (SECITEM_ZfreeItem_ptr) {
-        SECITEM_ZfreeItem_ptr(item, freeit);
-    }
-}
-
-static int my_PORT_GetError() {
-    if (!PORT_GetError_ptr) return -1;
-    return PORT_GetError_ptr();
-}
+// Helper functions implemented in cookies.go
+SECStatus my_NSS_Init(const char *configdir);
+SECStatus my_NSS_Shutdown(void);
+PK11SlotInfo* my_PK11_GetInternalKeySlot(void);
+void my_PK11_FreeSlot(PK11SlotInfo *slot);
+PRBool my_PK11_NeedLogin(PK11SlotInfo *slot);
+SECStatus my_PK11_CheckUserPassword(PK11SlotInfo *slot, const char *password);
+SECStatus my_PK11SDR_Decrypt(SECItem *data, SECItem *result, void *cx);
+void my_SECITEM_ZfreeItem(SECItem *item, PRBool freeit);
+int my_PORT_GetError(void);
 */
 import "C"
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -216,23 +49,47 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
 )
 
+// Global logger for this extractor (also used by cookies.go)
+var logger *log.Logger
+
+// PasswordStore holds decrypted credentials
 type PasswordStore []map[string]string
 
-var (
-	logger  *log.Logger
-	verbose = false
-)
-
+// NSSWrapper provides a cleaner interface to NSS operations
 type NSSWrapper struct {
 	nonFatalDecryption bool
 	initialized        bool
-	slot               *C.PK11SlotInfo // Track the key slot
 	mutex              sync.Mutex
+}
+
+// Initializef uses "sql:<profile>" which is recommended for modern Firefox (key4.db)
+func (n *NSSWrapper) Initializef(profile string) error {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
+	if n.initialized {
+		return fmt.Errorf("NSS already initialized")
+	}
+
+	profilePath := C.CString("sql:" + profile)
+	defer C.free(unsafe.Pointer(profilePath))
+
+	logger.Printf("Initializing NSS with profile: %s", profile)
+
+	errStatus := C.my_NSS_Init(profilePath)
+	if errStatus != C.SECSuccess {
+		return fmt.Errorf("NSS_Init failed with status %d", errStatus)
+	}
+
+	n.initialized = true
+	logger.Printf("NSS initialized successfully")
+	return nil
 }
 
 func (n *NSSWrapper) Shutdown() error {
@@ -243,51 +100,197 @@ func (n *NSSWrapper) Shutdown() error {
 		return nil
 	}
 
-	// CRITICAL: Free the slot BEFORE shutting down NSS
-	// This is the most common cause of NSS_Shutdown failures
-	if n.slot != nil {
-		logger.Printf("Freeing PK11 slot before shutdown...")
-		C.my_PK11_FreeSlot(n.slot)
-		n.slot = nil
-	}
-
-	// Mark as not initialized BEFORE attempting shutdown
-	n.initialized = false
-
-	// Now attempt shutdown - should succeed with proper cleanup
 	errStatus := C.my_NSS_Shutdown()
-	
-	if errStatus == C.SECSuccess {
-		logger.Printf("NSS shutdown completed successfully")
-		return nil
+	if errStatus != C.SECSuccess {
+		logger.Printf("NSS_Shutdown failed with status %d", errStatus)
 	}
 
-	// If it still fails, get detailed error
+	n.initialized = false
+	logger.Printf("NSS shutdown completed")
 	return nil
 }
 
+func (n *NSSWrapper) Authenticatef(profile string, interactive bool) error {
+	if !n.initialized {
+		return fmt.Errorf("NSS not initialized")
+	}
+
+	logger.Printf("Getting internal key slot...")
+
+	keyslot := C.my_PK11_GetInternalKeySlot()
+	if keyslot == nil {
+		return fmt.Errorf("failed to get internal key slot")
+	}
+	defer C.my_PK11_FreeSlot(keyslot)
+
+	needLogin := C.my_PK11_NeedLogin(keyslot)
+	if needLogin == C.PR_TRUE {
+		password := askPassword(profile, interactive)
+
+		logger.Printf("Authenticating with password...")
+
+		cPassword := C.CString(password)
+		defer C.free(unsafe.Pointer(cPassword))
+
+		errStatus := C.my_PK11_CheckUserPassword(keyslot, cPassword)
+		if errStatus != C.SECSuccess {
+			return fmt.Errorf("primary password incorrect")
+		}
+
+		logger.Printf("Authentication successful")
+	} else {
+		logger.Printf("No primary password required")
+	}
+
+	return nil
+}
+
+func (n *NSSWrapper) Decryptf(base64Data string) (string, error) {
+	if !n.initialized {
+		return "", fmt.Errorf("NSS not initialized")
+	}
+
+	// Decode base64 data
+	data, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64: %v", err)
+	}
+
+	// Create input SECItem
+	var inp C.SECItem
+	inp._type = C.siBuffer
+	inp.data = (*C.uchar)(C.CBytes(data))
+	inp.len = C.uint(len(data))
+	defer C.free(unsafe.Pointer(inp.data))
+
+	// Create output SECItem
+	var out C.SECItem
+	out._type = C.siBuffer
+	out.data = nil
+	out.len = 0
+
+	// Decrypt
+	errStatus := C.my_PK11SDR_Decrypt(&inp, &out, nil)
+	if errStatus != C.SECSuccess {
+		if n.nonFatalDecryption {
+			return "", fmt.Errorf("decryption failed")
+		}
+		errCode := C.my_PORT_GetError()
+		return "", fmt.Errorf("decryption failed with status %d, error code %d", errStatus, errCode)
+	}
+
+	// Extract result
+	result := C.GoStringN((*C.char)(unsafe.Pointer(out.data)), C.int(out.len))
+
+	// Clean up
+	C.my_SECITEM_ZfreeItem(&out, C.PR_FALSE)
+
+	return result, nil
+}
+
+// FirefoxDecryptor is the main helper struct
 type FirefoxDecryptor struct {
 	profile string
 	nss     *NSSWrapper
 }
 
-func NewFirefoxDecryptor(nonFatal bool) *FirefoxDecryptor {
+func NewFirefoxDecryptor(nonFatalDecryption bool) *FirefoxDecryptor {
 	return &FirefoxDecryptor{
-		nss: &NSSWrapper{nonFatalDecryption: nonFatal},
+		nss: NewNSSWrapper(nonFatalDecryption),
 	}
 }
 
 func (f *FirefoxDecryptor) LoadProfile(profile string) error {
 	f.profile = profile
-	return f.nss.Initialize(profile)
+	return f.nss.Initializef(profile)
 }
 
-func (f *FirefoxDecryptor) Authenticate() error {
-	return f.nss.Authenticate(f.profile, false)
+func (f *FirefoxDecryptor) Authenticate(interactive bool) error {
+	return f.nss.Authenticatef(f.profile, interactive)
 }
 
 func (f *FirefoxDecryptor) Shutdown() error {
 	return f.nss.Shutdown()
+}
+
+func (f *FirefoxDecryptor) FindCredentials() (PasswordStore, error) {
+	logger.Printf("Searching for credentials in profile: %s", f.profile)
+
+	// Candidate in profile root
+	jsonPath := filepath.Join(f.profile, "logins.json")
+	logger.Printf("Checking: %s", jsonPath)
+	if fi, err := os.Stat(jsonPath); err == nil && !fi.IsDir() {
+		logger.Printf("Found JSON credentials file: %s", jsonPath)
+		return f.parseJSONCredentials(jsonPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		logger.Printf("Stat error for %s: %v", jsonPath, err)
+	}
+
+	// Candidate SQLite (older)
+	sqlitePath := filepath.Join(f.profile, "signons.sqlite")
+	logger.Printf("Checking: %s", sqlitePath)
+	if fi, err := os.Stat(sqlitePath); err == nil && !fi.IsDir() {
+		logger.Printf("Found SQLite credentials file: %s", sqlitePath)
+		return f.parseSQLiteCredentials(sqlitePath)
+	} else if err != nil && !os.IsNotExist(err) {
+		logger.Printf("Stat error for %s: %v", sqlitePath, err)
+	}
+
+	// If not found in root, do a shallow recursive search (depth limited)
+	logger.Printf("Did not find credentials in profile root; walking profile directory (depth 3) to search for logins.json / signons.sqlite")
+
+	var foundJSON, foundSQLite string
+	maxDepth := 3
+	baseDepth := len(strings.Split(filepath.Clean(f.profile), string(os.PathSeparator)))
+
+	_ = filepath.Walk(f.profile, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// ignore permissions or other errors but log them
+			logger.Printf("Walk error: %v (path: %s)", err, path)
+			return nil
+		}
+		if info.IsDir() {
+			// check depth
+			relDepth := len(strings.Split(filepath.Clean(path), string(os.PathSeparator))) - baseDepth
+			if relDepth > maxDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		base := strings.ToLower(filepath.Base(path))
+		if base == "logins.json" && foundJSON == "" {
+			foundJSON = path
+			logger.Printf("Located logins.json at: %s", path)
+			return nil
+		}
+		if base == "signons.sqlite" && foundSQLite == "" {
+			foundSQLite = path
+			logger.Printf("Located signons.sqlite at: %s", path)
+			return nil
+		}
+		return nil
+	})
+
+	if foundJSON != "" {
+		return f.parseJSONCredentials(foundJSON)
+	}
+	if foundSQLite != "" {
+		return f.parseSQLiteCredentials(foundSQLite)
+	}
+
+	// Nothing found
+	logger.Printf("Directory listing for profile root (%s):", f.profile)
+	entries, err := os.ReadDir(f.profile)
+	if err == nil {
+		for _, e := range entries {
+			info, _ := e.Info()
+			logger.Printf(" - %s (dir=%v size=%d)", e.Name(), e.IsDir(), info.Size())
+		}
+	} else {
+		logger.Printf(" failed to list profile root: %v", err)
+	}
+
+	return nil, fmt.Errorf("no credentials file found (logins.json or signons.sqlite)")
 }
 
 func (f *FirefoxDecryptor) parseJSONCredentials(path string) (PasswordStore, error) {
@@ -315,7 +318,8 @@ func (f *FirefoxDecryptor) parseJSONCredentials(path string) (PasswordStore, err
 
 	for _, login := range data.Logins {
 		if login.EncType != 0 {
-			username, err := f.nss.Decrypt(login.EncryptedUsername)
+			// Decrypt username and password
+			username, err := f.nss.Decryptf(login.EncryptedUsername)
 			if err != nil {
 				if f.nss.nonFatalDecryption {
 					logger.Printf("Failed to decrypt username for %s: %v", login.Hostname, err)
@@ -324,7 +328,7 @@ func (f *FirefoxDecryptor) parseJSONCredentials(path string) (PasswordStore, err
 				return nil, fmt.Errorf("failed to decrypt username: %v", err)
 			}
 
-			password, err := f.nss.Decrypt(login.EncryptedPassword)
+			password, err := f.nss.Decryptf(login.EncryptedPassword)
 			if err != nil {
 				if f.nss.nonFatalDecryption {
 					logger.Printf("Failed to decrypt password for %s: %v", login.Hostname, err)
@@ -339,6 +343,7 @@ func (f *FirefoxDecryptor) parseJSONCredentials(path string) (PasswordStore, err
 				"password": password,
 			})
 		} else {
+			// Not encrypted
 			credentials = append(credentials, map[string]string{
 				"url":      login.Hostname,
 				"user":     login.EncryptedUsername,
@@ -350,23 +355,19 @@ func (f *FirefoxDecryptor) parseJSONCredentials(path string) (PasswordStore, err
 	return credentials, nil
 }
 
+func (f *FirefoxDecryptor) parseSQLiteCredentials(path string) (PasswordStore, error) {
+	// Not implemented for now
+	logger.Printf("SQLite credentials parsing not implemented (path: %s)", path)
+	return PasswordStore{}, nil
+}
+
 func fileExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()
 }
 
-func expandPath(path string) (string, error) {
-	if strings.HasPrefix(path, "~") {
-		usr, err := user.Current()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(usr.HomeDir, path[1:]), nil
-	}
-	return path, nil
-}
-
-func findProfilePathSimple(basepath string) (string, error) {
+func findProfilePath(basepath string, interactive bool, choice string, list bool) (string, error) {
+	// If basepath itself already looks like a profile (has logins.json), just use it.
 	if fi, err := os.Stat(basepath); err == nil && fi.IsDir() {
 		if fileExists(filepath.Join(basepath, "logins.json")) ||
 			fileExists(filepath.Join(basepath, "logins.db")) {
@@ -376,7 +377,9 @@ func findProfilePathSimple(basepath string) (string, error) {
 	}
 
 	profilesRoot := filepath.Join(basepath, "Profiles")
-	if fi, err := os.Stat(profilesRoot); err != nil || !fi.IsDir() {
+	fi, err := os.Stat(profilesRoot)
+	if err != nil || !fi.IsDir() {
+		// Fallback: assume basepath is already a profile directory
 		logger.Printf("Profiles directory not found, assuming %s is a profile directory", basepath)
 		if _, err := os.Stat(basepath); err != nil {
 			return "", fmt.Errorf("profile directory does not exist: %s", basepath)
@@ -409,124 +412,176 @@ func findProfilePathSimple(basepath string) (string, error) {
 		return "", fmt.Errorf("no profiles found in %s", profilesRoot)
 	}
 
-	for i := range profiles {
-		p := profiles[i].Path
-		if fileExists(filepath.Join(p, "logins.json")) &&
-			fileExists(filepath.Join(p, "key4.db")) {
-			return p, nil
+	// Choose profile based on -choice (index or name)
+	var selected *prof
+	if choice != "" {
+		if idx, err := strconv.Atoi(choice); err == nil {
+			// Numeric index (1-based)
+			idx--
+			if idx >= 0 && idx < len(profiles) {
+				selected = &profiles[idx]
+			} else {
+				return "", fmt.Errorf("no such profile index: %s", choice)
+			}
+		} else {
+			// Match by folder name (case-insensitive)
+			for i := range profiles {
+				if strings.EqualFold(profiles[i].Name, choice) {
+					selected = &profiles[i]
+					break
+				}
+			}
+			if selected == nil {
+				return "", fmt.Errorf("no such profile name: %s", choice)
+			}
 		}
 	}
 
-	for i := range profiles {
-		p := profiles[i].Path
-		if fileExists(filepath.Join(p, "logins.db")) &&
-			fileExists(filepath.Join(p, "key4.db")) {
-			return p, nil
+	// If still nil, prefer profiles that actually have credential files.
+	if selected == nil {
+		// 1) Prefer logins.json + key4.db
+		for i := range profiles {
+			p := profiles[i].Path
+			if fileExists(filepath.Join(p, "logins.json")) &&
+				fileExists(filepath.Join(p, "key4.db")) {
+				selected = &profiles[i]
+				break
+			}
 		}
 	}
 
-	return profiles[0].Path, nil
-}
-
-func LoadNSSLibraryWrapper(firefoxPath string) error {
-	cPath := C.CString(firefoxPath)
-	defer C.free(unsafe.Pointer(cPath))
-
-	result := C.load_nss_library(cPath)
-	if result == -1 {
-		return fmt.Errorf("failed to load nss3.dll - Firefox may not be installed")
+	if selected == nil {
+		// 2) Then prefer logins.db + key4.db
+		for i := range profiles {
+			p := profiles[i].Path
+			if fileExists(filepath.Join(p, "logins.db")) &&
+				fileExists(filepath.Join(p, "key4.db")) {
+				selected = &profiles[i]
+				break
+			}
+		}
 	}
-	if result == -2 {
-		return fmt.Errorf("failed to load NSS functions from nss3.dll")
+
+	// 3) Final fallback: first profile
+	if selected == nil {
+		selected = &profiles[0]
 	}
-	return nil
+
+	// Sanity check
+	if fi, err := os.Stat(selected.Path); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("profile path is not a directory or missing: %s", selected.Path)
+	}
+
+	logger.Printf("Selected profile '%s' at %s", selected.Name, selected.Path)
+	return selected.Path, nil
 }
 
-func UnloadNSSLibraryWrapper() {
-	C.unload_nss_library()
+func expandPath(path string) (string, error) {
+	if strings.HasPrefix(path, "~") {
+		usr, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(usr.HomeDir, path[1:]), nil
+	}
+	return path, nil
 }
 
+// RunPasswords is the entry point used by cmd/main.go
 func RunPasswords() {
+	// Basic logger (stderr)
 	logger = log.New(os.Stderr, "", log.LstdFlags)
 
+	logger.Printf("Operating System: %s", runtime.GOOS)
+	logger.Printf("Architecture: %s", runtime.GOARCH)
+
+	// Load NSS library (shared implementation in cookies.go)
+	logger.Printf("Loading NSS library...")
+	if err := LoadNSSLibrary(""); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to load NSS library:", err)
+		return
+	}
+	defer UnloadNSSLibrary()
+	logger.Printf("NSS library loaded successfully")
+
+	// Determine default Firefox profile base path
 	var profileBase string
 	switch runtime.GOOS {
 	case "windows":
 		profileBase = filepath.Join(os.Getenv("APPDATA"), "Mozilla", "Firefox")
 	case "darwin":
-		profileBase = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Firefox")
+		profileBase = "~/Library/Application Support/Firefox"
 	default:
-		profileBase = filepath.Join(os.Getenv("HOME"), ".mozilla", "firefox")
+		profileBase = "~/.mozilla/firefox"
 	}
 
-	logger.Printf("Loading NSS library...")
-	if err := LoadNSSLibraryWrapper(""); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to load NSS library:", err)
-		return
-	}
-	defer UnloadNSSLibraryWrapper()
-	logger.Printf("NSS loaded")
-
+	// Expand profile path
 	profilePath, err := expandPath(profileBase)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "expand profile path failed:", err)
+		fmt.Fprintln(os.Stderr, "failed to expand profile path:", err)
 		return
 	}
-	profile, err := findProfilePathSimple(profilePath)
+
+	// Find actual profile
+	profile, err := findProfilePath(profilePath, true, "", false)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "find profile failed:", err)
+		fmt.Fprintln(os.Stderr, "failed to find Firefox profile:", err)
 		return
 	}
+
 	logger.Printf("Using profile: %s", profile)
 
+	// Initialize decryptor
 	decryptor := NewFirefoxDecryptor(false)
 
+	// Load profile
 	if err := decryptor.LoadProfile(profile); err != nil {
-		fmt.Fprintln(os.Stderr, "LoadProfile failed:", err)
+		fmt.Fprintln(os.Stderr, "failed to load Firefox profile:", err)
 		return
 	}
-	
-	// Ensure shutdown is called even if authentication fails
-	defer func() {
-		if err := decryptor.Shutdown(); err != nil {
-			logger.Printf("Shutdown error: %v", err)
-		}
-	}()
+	defer decryptor.Shutdown()
 
-	if err := decryptor.Authenticate(); err != nil {
-		fmt.Fprintln(os.Stderr, "Authenticate failed:", err)
+	// Authenticate (interactive = true so master password prompt works if needed)
+	if err := decryptor.Authenticate(true); err != nil {
+		fmt.Fprintln(os.Stderr, "authentication failed:", err)
 		return
 	}
 
-	jsonPath := filepath.Join(profile, "logins.json")
-	if fileExists(jsonPath) {
-		creds, err := decryptor.parseJSONCredentials(jsonPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "parseJSONCredentials failed:", err)
-			return
-		}
-		
-		outPath := filepath.Join("results", "firefox_passwords.json")
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
-			fmt.Fprintln(os.Stderr, "mkdir failed:", err)
-			return
-		}
-		f, err := os.Create(outPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "create output failed:", err)
-			return
-		}
-		enc := json.NewEncoder(f)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(creds); err != nil {
-			fmt.Fprintln(os.Stderr, "encode failed:", err)
-			_ = f.Close()
-			return
-		}
-		_ = f.Close()
-		fmt.Println("Saved:", outPath)
+	// Find and decrypt credentials
+	creds, err := decryptor.FindCredentials()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to find credentials:", err)
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "logins.json not found; sqlite parsing is not implemented in this extractor")
+	if len(creds) == 0 {
+		logger.Printf("No passwords found in profile")
+		return
+	}
+
+	logger.Printf("Found %d password entries", len(creds))
+
+	// Write to JSON file within ./results/firefox/
+	outPath := filepath.Join("results", "firefox", "firefox_passwords.json")
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to create results directory:", err)
+		return
+	}
+
+	f, err := os.Create(outPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to create output file:", err)
+		return
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(creds); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to encode credentials to JSON:", err)
+		return
+	}
+
+	fmt.Printf("Successfully extracted %d Firefox credentials\n", len(creds))
+	fmt.Println("Saved:", outPath)
 }

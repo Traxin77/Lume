@@ -250,10 +250,10 @@ func Run() {
 
 	// Save to file
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "chromium")
 	os.MkdirAll(resultsDir, 0755)
 
-	outFile := filepath.Join(resultsDir, "autofill.json")
+	outFile := filepath.Join(resultsDir, "chromium_autofill.json")
 	f, err := os.Create(outFile)
 	if err != nil {
 		fmt.Println("error creating output file:", err)

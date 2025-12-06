@@ -111,9 +111,9 @@ func Run() {
 	scanBrowser3(bravePath, "Brave", output)
 
 	exeDir, _ := os.Executable()
-	resultsDir := filepath.Join(filepath.Dir(exeDir), "results")
+	resultsDir := filepath.Join(filepath.Dir(exeDir), "results", "chromium")
 	os.MkdirAll(resultsDir, 0755)
-	outputPath := filepath.Join(resultsDir, "extensions.json")
+	outputPath := filepath.Join(resultsDir, "chromium_extensions.json")
 
 	file, err := os.Create(outputPath)
 	if err != nil {
