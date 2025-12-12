@@ -34,9 +34,12 @@ func Run() {
 	output := flag.String("output", "chromium_profiles.json", "Output JSON file name (stored in results/)")
 	flag.Parse()
 
+	// Normalize flag to lowercase so users can pass "Chrome", "chrome", "CHROME", etc.
+	browserFlag := strings.ToLower(*browser)
+
 	var profiles []Profile
 
-	switch *browser {
+	switch browserFlag {
 	case "all":
 		profiles = append(profiles, scanBrowser2("chrome")...)
 		profiles = append(profiles, scanBrowser2("edge")...)
@@ -66,7 +69,6 @@ func Run() {
 	fmt.Printf("Extracted %d profiles to %s\n", len(profiles), outputPath)
 }
 
-
 func scanBrowser2(browserName string) []Profile {
 	browserPath := getBrowserPath(browserName)
 	if browserPath == "" {
@@ -93,6 +95,15 @@ func scanBrowser2(browserName string) []Profile {
 		return nil
 	}
 
+	// Map to display name used in output JSON (capitalized)
+	displayBrowser := browserName
+	switch browserName {
+	case "chrome":
+		displayBrowser = "Chrome"
+	case "edge":
+		displayBrowser = "Edge"
+	}
+
 	var profiles []Profile
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -114,7 +125,7 @@ func scanBrowser2(browserName string) []Profile {
 		}
 
 		profiles = append(profiles, Profile{
-			Browser:     browserName,
+			Browser:     displayBrowser,
 			ProfileDir:  profileDir,
 			DisplayName: info.Name,
 			Email:       info.UserName,
