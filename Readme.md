@@ -9,7 +9,7 @@ It illuminates hidden traces left behind by Chromium-based browsers — extracti
 
 ## Key Features
 
--  **Comprehensive Artifact Extraction**
+-  ###**Comprehensive Artifact Extraction**
   - Browser **History**, **Downloads**, **Bookmarks**, **Cookies**, **Saved Passwords**
 -  **Advanced Decryption**
   - Supports **DPAPI** and **App-Bound Encryption (ABE)** on modern Chromium browsers
