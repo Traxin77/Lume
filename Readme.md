@@ -9,18 +9,18 @@ It illuminates hidden traces left behind by Chromium-based browsers — extracti
 
 ## Key Features
 
-- 🔍 **Comprehensive Artifact Extraction**
+-  **Comprehensive Artifact Extraction**
   - Browser **History**, **Downloads**, **Bookmarks**, **Cookies**, **Saved Passwords**
-- 🔐 **Advanced Decryption**
+-  **Advanced Decryption**
   - Supports **DPAPI** and **App-Bound Encryption (ABE)** on modern Chromium browsers
   - Works on **Windows 11** and compatible with Chrome v139+
-- 👥 **Multi-Profile Support**
+-  **Multi-Profile Support**
   - Automatically detects and scans all user profiles
-- 📄 **Clean JSON Output**
+-  **Clean JSON Output**
   - Structured, indented files for easy analysis
-- ⚡ **Modular & Extensible**
+-  **Modular & Extensible**
   - Each extractor works independently or as part of a full pipeline
-- 🧩 **Cross-Browser Support**
+-  **Cross-Browser Support**
   - Chrome, Edge, Brave, Opera, Chromium, and easily extendable
 
 ---
@@ -40,7 +40,7 @@ git clone https://github.com/username/lume.git
 cd lume
 go build -o lume /cmd/main.go
 ```
-## 💡 Project Philosophy & Disclaimer
+##  Project Philosophy & Disclaimer
 
 > [!IMPORTANT]
 > This is a hobby project created for educational and security research purposes. It serves as a personal learning experience and a playing field for exploring advanced Windows concepts.
